@@ -49,33 +49,53 @@ if run_button:
 
             output_csv_path = os.path.join(temp_dir, "ro_invoice_mapping_detailed.csv")
 
-            # === STEP 1: Build RO -> Invoice Mapping ===
+            # === STEP 1: Build RO -> Invoice + Debit Note Mapping ===
             doc = fitz.open(pdf_path)
             lines = []
             for page in doc:
                 lines.extend(page.get_text().split('\n'))
 
-            invoice_map = {}  # line index -> invoice number
+            invoice_map = {}
             for i, line in enumerate(lines):
-                if line.strip().lower() == "invoice number":
-                    if i + 1 < len(lines):
-                        inv_value = lines[i + 1].strip()
-                        if re.match(r"BHR2-\d{4}-[A-Z0-9:/\-]+", inv_value):
-                            invoice_map[i] = inv_value
+                if "invoice number" in line.lower() and i + 1 < len(lines):
+                    invoice_number = lines[i + 1].strip()
+                    debit_note = None
+
+                    # Look up to 5 lines above for debit note reference
+                    for j in range(i - 1, max(i - 6, -1), -1):
+                        if "debit note reference" in lines[j].lower():
+                            match = re.search(r"(\d{6,})", lines[j])
+                            if match:
+                                debit_note = match.group(1)
+                                break
+                            if j + 1 < len(lines):
+                                match_next = re.search(r"(\d{6,})", lines[j + 1])
+                                if match_next:
+                                    debit_note = match_next.group(1)
+                                    break
+
+                    if invoice_number:
+                        invoice_map[i] = {
+                            "invoice_number": invoice_number,
+                            "debit_note": debit_note
+                        }
 
             entries = []
             ro_pattern = re.compile(r"RO\d{10,}", re.IGNORECASE)
+
             for i, line in enumerate(lines):
-                if "Remarks" in line and "RO" in line:
+                if "remarks" in line.lower() and "RO" in line:
                     ro_match = ro_pattern.search(line)
                     if ro_match:
                         ro_number = ro_match.group().strip()
-                        invoice_number = None
-                        for inv_line in sorted(invoice_map.keys(), reverse=True):
-                            if inv_line < i:
-                                invoice_number = invoice_map[inv_line]
-                                break
-                        entries.append({"RO Number": ro_number, "Invoice Number": invoice_number})
+                        closest = max([key for key in invoice_map if key < i], default=None)
+                        if closest is not None:
+                            invoice_data = invoice_map[closest]
+                            entries.append({
+                                "RO Number": ro_number,
+                                "Invoice Number": invoice_data['invoice_number'],
+                                "Debit Note Reference": invoice_data['debit_note']
+                            })
 
             ro_df = pd.DataFrame(entries)
 
@@ -87,6 +107,7 @@ if run_button:
             for _, row in ro_df.iterrows():
                 ro_number = row['RO Number']
                 invoice_number = row['Invoice Number']
+                debit_note = row['Debit Note Reference']
 
                 matching_file = next((f for f in all_files if ro_number in f), None)
                 if not matching_file:
@@ -96,7 +117,6 @@ if run_button:
                 filepath = os.path.join(extracted_folder, matching_file)
                 df = pd.read_excel(filepath, sheet_name='RO')
 
-                # Fix misnamed columns: 'Reject Reason' actually holds Item Value, and the next unnamed column is real Reject Reason
                 cols = df.columns.tolist()
                 if "Reject Reason" in cols:
                     misnamed_index = cols.index("Reject Reason")
@@ -124,7 +144,8 @@ if run_button:
                 for _, data_row in grouped.iterrows():
                     enriched_row = {
                         "RO Number": ro_number,
-                        "Invoice Number": invoice_number
+                        "Invoice Number": invoice_number,
+                        "Debit Note Reference": debit_note
                     }
                     enriched_row.update(data_row.to_dict())
                     final_records.append(enriched_row)
