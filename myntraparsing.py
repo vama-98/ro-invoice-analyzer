@@ -4,6 +4,7 @@ import os
 import fitz  # PyMuPDF
 import re
 import tempfile
+import zipfile
 import openpyxl
 
 st.set_page_config(page_title="RO & Invoice Analyzer", layout="wide")
@@ -12,32 +13,41 @@ st.title("📦 Return Order & Invoice Analyzer")
 st.markdown("""
 This dashboard lets you:
 1. Upload your RO summary PDF (with invoice mappings)
-2. Select the folder containing RO Excel files
-3. Provide the output folder path
-4. Run the analysis and download enriched results
+2. Upload a ZIP file containing all RO Excel files
+3. Run the analysis and download enriched results
 """)
 
 # === Upload PDF ===
 pdf_file = st.file_uploader("Upload HEVN PDF (RO Summary)", type="pdf")
 
-# === Folder Inputs ===
-ros_folder = st.text_input("Enter full path to the RO Excel folder:")
-output_folder = st.text_input("Enter full path where you want the output CSV:")
+# === Upload RO Excel ZIP ===
+zip_file = st.file_uploader("Upload ZIP containing RO Excel files", type="zip")
 
 run_button = st.button("🚀 Run Analysis")
 
 if run_button:
-    if not pdf_file or not ros_folder or not output_folder:
-        st.error("Please upload the PDF and provide both folder paths.")
+    if not pdf_file or not zip_file:
+        st.error("Please upload both the PDF and the ZIP file.")
     else:
         with st.spinner("Processing... Please wait."):
-            # Save uploaded PDF temporarily
             temp_dir = tempfile.mkdtemp()
+
+            # Save and read PDF
             pdf_path = os.path.join(temp_dir, "HEVN_temp.pdf")
             with open(pdf_path, "wb") as f:
                 f.write(pdf_file.read())
 
-            output_csv_path = os.path.join(output_folder, "ro_invoice_mapping_detailed.csv")
+            # Extract ZIP contents
+            zip_path = os.path.join(temp_dir, "ro_excels.zip")
+            with open(zip_path, "wb") as f:
+                f.write(zip_file.read())
+
+            extracted_folder = os.path.join(temp_dir, "extracted")
+            os.makedirs(extracted_folder, exist_ok=True)
+            with zipfile.ZipFile(zip_path, 'r') as zip_ref:
+                zip_ref.extractall(extracted_folder)
+
+            output_csv_path = os.path.join(temp_dir, "ro_invoice_mapping_detailed.csv")
 
             # === STEP 1: Build RO -> Invoice Mapping ===
             doc = fitz.open(pdf_path)
@@ -76,10 +86,10 @@ if run_button:
                 ro_number = row['RO Number']
                 invoice_number = row['Invoice Number']
                 filename = f"RO-{ro_number}.xlsx"
-                filepath = os.path.join(ros_folder, filename)
+                filepath = os.path.join(extracted_folder, filename)
 
                 if not os.path.exists(filepath):
-                    st.warning(f"⚠️ File not found for {ro_number}: {filepath}")
+                    st.warning(f"⚠️ File not found for {ro_number}: {filename}")
                     continue
 
                 df = pd.read_excel(filepath, sheet_name='RO')
