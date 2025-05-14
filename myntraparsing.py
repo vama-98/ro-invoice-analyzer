@@ -82,16 +82,18 @@ if run_button:
             # === STEP 2: Enrich with SKU grouping and amount ===
             final_records = []
 
+            all_files = [f for f in os.listdir(extracted_folder) if f.endswith('.xlsx')]
+
             for _, row in ro_df.iterrows():
                 ro_number = row['RO Number']
                 invoice_number = row['Invoice Number']
-                filename = f"RO-{ro_number}.xlsx"
-                filepath = os.path.join(extracted_folder, filename)
 
-                if not os.path.exists(filepath):
-                    st.warning(f"⚠️ File not found for {ro_number}: {filename}")
+                matching_file = next((f for f in all_files if ro_number in f), None)
+                if not matching_file:
+                    st.warning(f"⚠️ File not found for {ro_number}")
                     continue
 
+                filepath = os.path.join(extracted_folder, matching_file)
                 df = pd.read_excel(filepath, sheet_name='RO')
 
                 # Fix misnamed columns: 'Reject Reason' actually holds Item Value, and the next unnamed column is real Reject Reason
